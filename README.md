@@ -1,29 +1,110 @@
-# Telegram Drive Engine 🗄️
+# 🗄️ Telegram Drive Engine & FTP Backup Automator
 
-An automated, cross-platform backup router that packages target system folders into timestamped `.zip` archives (or ships raw data) and mirrors them to a **Telegram Chat/Channel (via Bot API)** or a local/remote **FTP Storage Unit (NAS, Local Cloud, Router Storage)**. Equipped with a modern, responsive interface built via CustomTkinter.
+A powerful, resizable desktop application built with Python and
+CustomTkinter that automates your data backups. It allows you to monitor
+multiple folders simultaneously and back up your assets directly to a
+**Telegram Private Chat** or an **FTP Server (Router Storage)**. It also
+features a built-in Telegram Bot for remote file retrieval without
+needing file extensions!
 
-## Key Features 🚀
+------------------------------------------------------------------------
 
-* **Dual Storage Pipelines:** Toggle dynamically between Telegram Bot streams and standard FTP network connections.
-* **Asynchronous Engine:** Utilizes isolated thread routing so heavy compression or networking operations never freeze the application UI.
-* **Automated Cron Scheduler:** Built-in lightweight cron-loop checking for scheduled backups to execute precise daily routines seamlessly.
-* **Smart Cache Retention:** Optional rule configurations to instantly purge temporary local zip wrappers or clear historical local logs after a set threshold of days.
-* **Credential Memory:** Tracks past configurations to feed quick dropdown selection cards upon setup modifications.
-* **Console Tracking:** Includes a synchronized event logger for tracing transmission feedback, errors, and task statuses in real-time.
+## 🚀 Key Features
 
----
+-   **Dual Storage Pipelines:** Seamlessly backup your files either to
+    **Telegram Channels/Chats** or **FTP Servers** (like local Router
+    Storage).
+-   **Intelligent Duplicate & Update Tracking:** Fingerprint tracking
+    based on `File Path + Size + Modification Timestamp`. If a file is
+    modified or present in multiple folders, the system intelligently
+    updates and captures it as a new version.
+-   **Extensionless Remote Bot Commands (`/sent`):** Retrieve files
+    remotely via Telegram! Just type `/sent filename` without worrying
+    about extensions.
+-   **Multi-Profile Search Support:** If the same file exists across
+    multiple monitored backup profiles, the bot streams all copies
+    separately and clearly tags the source profile name.
+-   **Fully Resizable Responsive UI:** Built using modern
+    `CustomTkinter` with dynamic scaling.
+-   **Smart Automation Engine:**
+    -   Cron Scheduling
+    -   Auto Compression
+    -   Retention Policy
+    -   Local cleanup after successful transfer
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/51236a1a-804a-4e4c-881d-6e8b8e52799e" width="650" alt="Dashboard Overview" />
-  <br><br>
-  <img src="https://github.com/user-attachments/assets/1cc2324d-49e9-404a-8215-fe3f645b87cb" width="650" alt="Folder Configuration Window" />
-</p>
+------------------------------------------------------------------------
 
----
+## 🛠️ Tech Stack & Prerequisites
 
-## 🛠️ System Prerequisites
+-   **Language:** Python 3.10+
+-   **GUI Framework:** CustomTkinter
+-   **Asynchronous Engine:** Asyncio & Threading
+-   **API Wrapper:** Python-Telegram-Bot v20+
 
-Ensure you have Python 3.8 or higher installed on your target machine.
+## 📦 Installation
 
-```bash
+``` bash
 pip install customtkinter python-telegram-bot
+```
+
+------------------------------------------------------------------------
+
+## 📂 Project Structure
+
+    backup_config.json
+        Stores folder paths, execution times, tokens, and target profiles.
+
+    backup_history.json
+        Stores file fingerprints and backup tracking data.
+
+    Backups/
+        Temporary compressed backup storage.
+
+------------------------------------------------------------------------
+
+## 🤖 Remote Telegram Bot Commands
+
+  Command     Syntax               Description
+  ----------- -------------------- -----------------------------------
+  Help        `/help`              Displays available commands
+  Send File   `/sent <filename>`   Searches and sends matching files
+
+### Example
+
+Typing:
+
+    /sent invoice
+
+will search for:
+
+    invoice.pdf
+    invoice.xlsx
+    invoice.png
+
+and return available copies with their source profile names.
+
+------------------------------------------------------------------------
+
+## ⚡ How to Run
+
+1.  Clone or download the repository.
+2.  Run:
+
+``` bash
+python Telegram Drive Engine.py
+python Telegram Drive Engine_ftp.py
+```
+
+3.  Click **Add Profile**.
+4.  Select folders to monitor.
+5.  Configure Telegram Bot Token / Chat ID or FTP details.
+6.  Start the Bot Listener.
+
+------------------------------------------------------------------------
+
+## 🤝 Contribution & License
+
+Created with ❤️ by **Tarun Sharma**.
+
+Feel free to fork this repository, submit issues, or create pull
+requests to improve the backup pipeline.
