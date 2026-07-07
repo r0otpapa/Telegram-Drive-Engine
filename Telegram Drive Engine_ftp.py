@@ -5,7 +5,7 @@ import zipfile
 import asyncio
 import threading
 from ftplib import FTP
-from datetime import datetime
+from datetime import datetime, timedelta
 import customtkinter as ctk
 from tkinter import filedialog
 from telegram import Bot
@@ -21,7 +21,7 @@ if not os.path.exists(BACKUP_DIR):
 ACTIVE_WORKERS = {}
 BOT_APP_INSTANCE = None
 BOT_THREAD_LOOP = None
-HISTORY_LOCK = threading.Lock()  # Threading lock to prevent race conditions
+HISTORY_LOCK = threading.Lock()
 
 # ================= DATA STORAGE MANAGEMENT LAYER =================
 
@@ -49,7 +49,6 @@ def save_history(history_data):
     with open(HISTORY_FILE, "w") as f: json.dump(history_data, f, indent=4)
 
 def add_to_history(fingerprints):
-    """Safely append new fingerprints to history file using a thread lock."""
     with HISTORY_LOCK:
         current_history = load_history()
         updated = False
@@ -61,7 +60,6 @@ def add_to_history(fingerprints):
             save_history(current_history)
 
 def get_file_fingerprint(folder_id, filepath):
-    """Generates a strict unique footprint combining Folder ID, Path, Size & Timestamp."""
     try:
         stat = os.stat(filepath)
         return f"{folder_id}_{os.path.basename(filepath)}_{int(stat.st_size)}_{int(stat.st_mtime)}"
@@ -103,11 +101,8 @@ async def upload_pipeline(files_to_upload, token, chat_id, folder_id, should_aut
                     await bot.send_document(chat_id=chat_id.strip(), document=f)
                 safe_log(f"✅ [{folder_id}] Uploaded successfully.")
                 
-                if use_zip:
-                    add_to_history(fingerprints_to_save)
-                else:
-                    fp_key = get_file_fingerprint(folder_id, file)
-                    add_to_history([fp_key])
+                # Always save individual file fingerprints to avoid re-zipping unchanged files later
+                add_to_history(fingerprints_to_save)
 
                 if should_auto_delete and use_zip and os.path.exists(file):
                     os.remove(file)
@@ -182,6 +177,7 @@ def run_folder_backup(folder_id, folder_data):
                 full_path = os.path.join(root, file)
                 fp_key = get_file_fingerprint(folder_id, full_path)
                 
+                # Dynamic filter works perfectly for both Zip and Raw File selections
                 if not backup_all and fp_key in history:
                     continue
                 
@@ -200,6 +196,8 @@ def run_folder_backup(folder_id, folder_data):
             folder_name = os.path.basename(path.rstrip(os.sep)) or "backup"
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             zip_path = os.path.join(BACKUP_DIR, f"{folder_name}_{timestamp}.zip")
+            
+            # Packages ONLY new/updated files into the zip file matrix
             create_standard_zip(path, zip_path, raw_files)
             files_to_upload.append(zip_path)
         else:
@@ -275,7 +273,7 @@ async def tg_sent_command(update, context):
                         matched_files.append((fid, full_path))
 
     if matched_files:
-        await update.message.reply_text(f"🔍 Found {len(matched_files)} matching asset(s) inside configuration profiles. Starting processing...")
+        await update.message.reply_text(f"🔍 Found {len(matched_files)} matching asset(s). Dispatching files...")
         for folder_id, found_file_path in matched_files:
             if os.path.exists(found_file_path):
                 try:
@@ -328,7 +326,7 @@ def toggle_bot_listener():
     if 'app' in globals(): app.refresh_dashboard()
 
 
-# ================= CRON SCHEDULER ENGINE =================
+# ================= SCHEDULER ENGINE =================
 
 LAST_FIRED_BACKUPS = {}
 
@@ -336,21 +334,39 @@ def global_scheduler():
     while True:
         config = load_config()
         now_dt = datetime.now()
-        current_time = now_dt.strftime("%H:%M")
+        
+        current_time_12h = now_dt.strftime("%I:%M %p") 
         current_date = now_dt.strftime("%Y-%m-%d")
+        current_day_int = now_dt.day
 
         for fid, fdata in config.items():
             if not isinstance(fdata, dict): continue
-            if fdata.get("auto_backup", False) and fdata.get("backup_time", "02:00") == current_time:
-                if LAST_FIRED_BACKUPS.get(fid) != f"{current_date}_{current_time}":
-                    LAST_FIRED_BACKUPS[fid] = f"{current_date}_{current_time}"
-                    start_threaded_backup(fid, fdata)
+            if fdata.get("auto_backup", False):
+                target_time = fdata.get("backup_time", "02:00 PM").strip()
+                frequency = fdata.get("backup_frequency", "Daily")
+                
+                if target_time == current_time_12h:
+                    unique_fire_key = f"{fid}_{current_date}_{target_time}"
+                    
+                    if LAST_FIRED_BACKUPS.get(fid) != unique_fire_key:
+                        should_trigger = False
+                        
+                        if frequency == "Daily":
+                            should_trigger = True
+                        elif frequency == "Monthly" and current_day_int == 1:
+                            should_trigger = True
+                        
+                        if should_trigger:
+                            LAST_FIRED_BACKUPS[fid] = unique_fire_key
+                            safe_log(f"⏰ [Scheduler] Auto-Trigger activated for profile: {fid} ({frequency} Cycle)")
+                            start_threaded_backup(fid, fdata)
+                            
         time.sleep(30)
 
 threading.Thread(target=global_scheduler, daemon=True).start()
 
 
-# ================= POPUP PROFILE WINDOW MODAL (RESIZABLE) =================
+# ================= POPUP PROFILE WINDOW MODAL =================
 
 class FolderConfigWindow(ctk.CTkToplevel):
     def __init__(self, parent, folder_id=None, folder_data=None):
@@ -360,10 +376,10 @@ class FolderConfigWindow(ctk.CTkToplevel):
         self.folder_data = folder_data or {}
         
         self.title("Folder Settings Manager" if folder_id else "Add Backup Profile")
-        self.geometry("580x700")
+        self.geometry("580x750")
         
         self.resizable(True, True) 
-        self.minsize(500, 700) 
+        self.minsize(500, 720) 
         
         self.transient(parent)
         self.grab_set()
@@ -390,8 +406,8 @@ class FolderConfigWindow(ctk.CTkToplevel):
         self.dynamic_frame.pack(fill="x", padx=20, pady=5)
 
         ctk.CTkLabel(main_scroll, text="Backup Strategy Filter Mode:", anchor="w").pack(fill="x", padx=20, pady=(5,0))
-        self.mode_var = ctk.StringVar(value="All Files" if self.folder_data.get("backup_all", True) else "New Files Only")
-        self.mode_selector = ctk.CTkSegmentedButton(main_scroll, values=["All Files", "New Files Only"], variable=self.mode_var)
+        self.mode_var = ctk.StringVar(value="All Files" if self.folder_data.get("backup_all", True) else "New/Updated Files")
+        self.mode_selector = ctk.CTkSegmentedButton(main_scroll, values=["All Files", "New/Updated Files"], variable=self.mode_var)
         self.mode_selector.pack(fill="x", padx=20, pady=5)
 
         self.bot_req_var = ctk.BooleanVar(value=self.folder_data.get("bot_requests_enabled", True))
@@ -401,11 +417,31 @@ class FolderConfigWindow(ctk.CTkToplevel):
         self.auto_var = ctk.BooleanVar(value=self.folder_data.get("auto_backup", False))
         ctk.CTkSwitch(main_scroll, text="Enable Automated Schedule Cycle", variable=self.auto_var).pack(anchor="w", padx=20, pady=5)
         
+        freq_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        freq_frame.pack(fill="x", padx=20, pady=5)
+        ctk.CTkLabel(freq_frame, text="Execution Interval (Frequency Cycle):").pack(side="left")
+        self.freq_selector = ctk.CTkComboBox(freq_frame, values=["Daily", "Monthly"], width=120)
+        self.freq_selector.set(self.folder_data.get("backup_frequency", "Daily"))
+        self.freq_selector.pack(side="right")
+        
         t_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
         t_frame.pack(fill="x", padx=20, pady=5)
-        ctk.CTkLabel(t_frame, text="Daily Time execution format (HH:MM):").pack(side="left")
+        ctk.CTkLabel(t_frame, text="Execution Clock Target Time (HH:MM):").pack(side="left")
+        
+        self.ampm_selector = ctk.CTkComboBox(t_frame, values=["AM", "PM"], width=70)
+        raw_saved_time = self.folder_data.get("backup_time", "02:00 PM")
+        
+        if " " in raw_saved_time:
+            time_digits, ampm_part = raw_saved_time.split(" ")
+            ampm_part = ampm_part.strip().upper()
+        else:
+            time_digits, ampm_part = raw_saved_time, "PM"
+            
+        self.ampm_selector.set(ampm_part if ampm_part in ["AM", "PM"] else "PM")
+        self.ampm_selector.pack(side="right", padx=(5, 0))
+        
         self.time_entry = ctk.CTkEntry(t_frame, width=80, placeholder_text="02:00")
-        self.time_entry.insert(0, self.folder_data.get("backup_time", "02:00"))
+        self.time_entry.insert(0, time_digits)
         self.time_entry.pack(side="right")
 
         self.zip_var = ctk.BooleanVar(value=self.folder_data.get("zip", True))
@@ -482,6 +518,10 @@ class FolderConfigWindow(ctk.CTkToplevel):
         config = load_config()
         fid = self.folder_id if self.folder_id else os.path.basename(path.rstrip(os.sep)) or "Profile"
         
+        time_text = self.time_entry.get().strip() or "02:00"
+        ampm_text = self.ampm_selector.get()
+        combined_12h_time = f"{time_text} {ampm_text}"
+        
         profile_entry = {
             "path": path,
             "dest_type": dest,
@@ -489,7 +529,8 @@ class FolderConfigWindow(ctk.CTkToplevel):
             "backup_all": True if self.mode_selector.get() == "All Files" else False,
             "bot_requests_enabled": self.bot_req_var.get(),
             "auto_backup": self.auto_var.get(),
-            "backup_time": self.time_entry.get().strip() or "02:00",
+            "backup_frequency": self.freq_selector.get(),
+            "backup_time": combined_12h_time,
             "auto_delete": self.del_var.get(),
             "delete_days": int(self.days_entry.get() or 7)
         }
@@ -593,7 +634,7 @@ class DashboardApp(ctk.CTk):
             if len(disp_path) > 30: disp_path = f"...{disp_path[-27:]}"
 
             dtype = "🌐 FTP" if fdata.get("dest_type") == "FTP (Router Storage)" else "🤖 TG"
-            mode = "🔄 All" if fdata.get("backup_all", True) else "🆕 New"
+            mode = "🔄 All" if fdata.get("backup_all", True) else "🆕 New/Mod"
             bot_stat = "📡 Bot On" if fdata.get("bot_requests_enabled", True) else "🔒 Bot Off"
             
             lbl_text = f"📂 {fid} [{dtype} | {mode} | {bot_stat}]\n📍 Path: {disp_path}"
